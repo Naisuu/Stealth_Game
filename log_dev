@@ -1,0 +1,1793 @@
+commit e49292ee4095dfbd1f330034d4c402e90a6336bd
+Author: Julien Vu <julien.vu@etud.u-pem.fr>
+Date:   Wed Jan 4 01:41:47 2023 +0100
+
+    Ajout des images
+
+diff --git a/Alarm.mp3 b/Alarm.mp3
+new file mode 100644
+index 0000000..b8d58cd
+Binary files /dev/null and b/Alarm.mp3 differ
+diff --git a/Foreign Affairs.mp3 b/Foreign Affairs.mp3
+new file mode 100644
+index 0000000..6d15a08
+Binary files /dev/null and b/Foreign Affairs.mp3 differ
+diff --git a/Prison Life.mp3 b/Prison Life.mp3
+new file mode 100644
+index 0000000..0e7f33f
+Binary files /dev/null and b/Prison Life.mp3 differ
+diff --git a/board.png b/board.png
+new file mode 100644
+index 0000000..da3dbbc
+Binary files /dev/null and b/board.png differ
+diff --git a/igm.png b/igm.png
+new file mode 100644
+index 0000000..7dba812
+Binary files /dev/null and b/igm.png differ
+
+commit a828fd5b8e7b9d364d005d86a91a9e52f7b7c406
+Author: Julien Vu <julien.vu@etud.u-pem.fr>
+Date:   Wed Jan 4 01:38:22 2023 +0100
+
+    Modification des collisions. Ajout des collisons entre joueur et gardien. Ajout de sauvegarde. Modification des affichages. Ajout des musiques.
+
+diff --git a/jeu.c b/jeu.c
+index 450219c..fa15eb7 100644
+--- a/jeu.c
++++ b/jeu.c
+@@ -2,10 +2,12 @@
+ #include <stdlib.h>
+ #include <unistd.h>
+ #include <time.h>
++#include <linux/time.h>
+ #include "MLV/MLV_all.h"
+ 
++
++#define _POSIX_C_SOURCE 199309L
+ #define SIZE 16
+-#define MIN(a,b) ((a) < (b) ? (a) : (b))
+ 
+ typedef struct {
+     int x;
+@@ -31,33 +33,50 @@ typedef struct {
+     int dirY;
+     int speed;
+     Mode mode;
++    int relic;
++    int radius;
+ } Guardian;
+ 
+-/*
+-typedef struct {
+-    Coor position;
+-    int classify;
+-} Board;
+-
+-typedef enum {
++/* typedef enum {
+     TILE,
+     WALL,
+     RELIC,
+     MANA
+ } Zone;
++*/
+ 
+-typedef struct {
+-    Coor position;
+-    Zone zone;
+-} Board;*/
++int expo(int a, int b) {
++    int i;
++    int n;
++    n = a;
++    if (b < 0) a = 0; /* c'est ce que dc renvoie avec une puissance négative */
++    else if (b == 0) a = 1;
++    else for (i = 0; i < b - 1; a = a * n, i++);
++    return a;
++}
+ 
+-/************************************************************/
+-void display_message(int x, int y, char* text) {
+-    MLV_draw_text(x, y, text, MLV_COLOR_BLACK);
++double racine( double x) {
++    int j;
++    double i;
++    for(i = x, j = 1 ; j <= 50 ; j++)
++        i = (i + x/i) / 2;
++    return i;
++}
++
++void clic(void) {
++    int x, y;
++    MLV_wait_mouse(&x, &y);
++    printf("(%d, %d)\n", x, y);
+ }
+ 
+-void initialise_board(int *board[]) {
+-    int i, j;    
++/************************************************************/
++
++
++void initialise_board(int *board[], int *relic[]) {
++    int i, j;
++    relic[0][0] = 30; relic[0][1] = 25;
++    relic[1][0] = 40; relic[1][1] = 55;
++    relic[2][0] = 6;  relic[2][1] = 40;
+     for (i = 0; i < 45; i++) {
+         for (j = 0; j < 60; j++) {
+             if (i == 0 || i == 44 || j == 0 || j == 59 ||
+@@ -67,10 +86,11 @@ void initialise_board(int *board[]) {
+                (i == 32 && j > 35) || (i > 35 && j == 47)) {
+                 board[i][j] = 1;    /* WALL */
+             }
+-            else if ((i == 30 && j == 15) ||(i == 40 && j == 55) ||(i == 6 && j == 40)) {
++            else if ((i == relic[0][0] && j == relic[0][1]) || (i == relic[1][0] && j == relic[1][1]) || 
++                     (i == relic[2][0] && j == relic[2][1])) {
+                 board[i][j] = 2;    /* RELIC */
+             }
+-            else board[i][j] = 0;   /* TILL */
++            else board[i][j] = 3;   /* TILL */
+         }
+     }
+ }
+@@ -87,9 +107,9 @@ void initialise_player(Player *player) {
+ void initialise_guardian(Guardian guardian[]) {
+     int i;
+     int dirX[5] = {1, 0, -1, 0, 1};
+-    int dirY[5] = {0, 1, 0, -1, 0};   
+-    int x_guardian[5] = {225, 270, 450, 510, 825};
+-    int y_guardian[5] = {225, 525, 420, 480, 90};
++    int dirY[5] = {0, 1, 0, -1, 0};       
++    int x_guardian[5] = {180, 300, 560, 660, 825};
++    int y_guardian[5] = {240, 600, 420, 640, 90};
+ 
+     for (i = 0; i < 5; i++){
+         guardian[i].position.x = x_guardian[i];
+@@ -98,26 +118,35 @@ void initialise_guardian(Guardian guardian[]) {
+         guardian[i].dirY = dirY[i];
+         guardian[i].speed = 60;
+         guardian[i].mode = NORMAL;
++        guardian[i].relic = 3;
++        guardian[i].radius = 4;
+     }
+ }
+ 
+-void display_player(Player *player){
++/****************************************************************/
++
++void display_message(int x, int y, char* text) {
++    MLV_draw_text(x, y, text, MLV_COLOR_RED);
++    MLV_actualise_window();
++}
++
++void display_player(Player *player) {
+     MLV_draw_circle(player->position.x, player->position.y, SIZE/2, MLV_COLOR_BLACK);
+     MLV_draw_filled_circle(player->position.x, player->position.y, SIZE/2-1, MLV_COLOR_RED);
+     MLV_actualise_window();
+ }
+ 
+-void display_guardian(Guardian guardian[]){
++void display_guardian(Guardian guardian[]) {
+     int i;
+     for (i = 0; i < 5; i++) {
+         MLV_draw_circle(guardian[i].position.x, guardian[i].position.y, SIZE/2, MLV_COLOR_BLACK);
+         MLV_draw_filled_circle(guardian[i].position.x, guardian[i].position.y, SIZE/2-1, MLV_COLOR_BLUE);
+-        MLV_draw_circle(guardian[i].position.x, guardian[i].position.y, SIZE * 4, MLV_COLOR_BLUE);
++        MLV_draw_circle(guardian[i].position.x, guardian[i].position.y, SIZE * guardian[i].radius, MLV_COLOR_BLUE);
+     }
+     MLV_actualise_window(); 
+ }
+ 
+-void display_board(int *board[]){
++void display_board(int *board[]) {
+     int i, j;
+     MLV_clear_window(MLV_COLOR_GREY);
+     for (i = 0; i < 45; i++) {
+@@ -127,263 +156,559 @@ void display_board(int *board[]){
+                         break;
+                 case 2: MLV_draw_filled_rectangle(j * SIZE, i * SIZE, SIZE, SIZE, MLV_COLOR_GREEN);  /* RELIC */
+                         break;
+-                case 3: MLV_draw_filled_rectangle(j * SIZE, i * SIZE, SIZE, SIZE, MLV_COLOR_RED);
+-                        break;
++                case 3: MLV_draw_filled_rectangle(j * SIZE, i * SIZE, SIZE, SIZE, MLV_COLOR_GREY);   /* MANA */
++                        
+                 default:MLV_draw_rectangle(j * SIZE, i * SIZE, SIZE, SIZE, MLV_COLOR_BLACK);         /* TILL */
+             }
+-        } 
++        }
+     }
+     MLV_actualise_window();
+ }
+ 
+-int test_colision(int *board[], int positionX, int positionY, int dirX, int dirY){ /* gardien */
+-    int x, y, flag;
+-    flag = 0;
+-    x = positionX / SIZE; /*  Chercher colonne */
+-    y = positionY / SIZE; /*  Chercher ligne */
+-    if (dirX == 1 && (board[y][x+1] == 1 || board[y][x+1] == 2) && positionX % SIZE == SIZE/2)
+-        flag = 1;
+-    else if (dirX == -1 && (board[y][x-1] == 1 || board[y][x-1] == 2) && positionX % SIZE == SIZE/2)
+-        flag = 1;  
+-    else if (dirY == 1 && (board[y+1][x] == 1 || board[y+1][x] == 2) && positionY % SIZE == SIZE/2) 
+-        flag = 2;
+-    else if (dirY == -1 && (board[y-1][x] == 1 || board[y-1][x] == 2) && positionY % SIZE == SIZE/2)
+-        flag = 2;
+-    else flag = 0;
+-    return flag; /* flag: 1 = colision x, 2 = colision y  */
+-}
+-
+-void start_panic(Guardian guardian[]){
+-    int i;
+-    for (i = 0; i < 5; i++) {
+-        guardian[i].mode = PANIC;
+-        guardian[i].speed = 200;
++void display_endgame(int state) {
++    if (state == 1) {
++        MLV_draw_rectangle(200, 200, 500, 400, MLV_COLOR_BLACK);
++        MLV_draw_filled_rectangle(200, 200, 500, 400, MLV_COLOR_YELLOW1);
++        MLV_draw_text_with_font(350, 250, "VICTORY", MLV_load_font("Garuda-Oblique.ttf", 50), MLV_COLOR_GREEN1);
++        MLV_draw_text_with_font(250, 350, "You've won !", MLV_load_font("Garuda-Oblique.ttf", 30), MLV_COLOR_BLACK);
++    }
++    else {
++        MLV_draw_rectangle(200, 200, 500, 400, MLV_COLOR_BLACK);
++        MLV_draw_filled_rectangle(200, 200, 500, 400, MLV_COLOR_YELLOW1);
++        MLV_draw_text_with_font(300, 250, "GAME OVER", MLV_load_font("Garuda-Oblique.ttf", 50), MLV_COLOR_RED);
++        MLV_draw_text_with_font(250, 350, "You've lost !", MLV_load_font("Garuda-Oblique.ttf", 30), MLV_COLOR_BLACK);
+     }
+ }
+ 
+-void stop_panic(Guardian guardian[]){
++
++/******************************************/
++double calcul_distance(Player *player, Guardian guardian) {
++    int x1, x2, y1, y2;
++    int dx, dy;
++    x1 = player->position.x;
++    y1 = player->position.y;
++    x2 = guardian.position.x;
++    y2 = guardian.position.y;
++    dx = x2 - x1;
++    dy = y2 - y1;
++    return racine((double)(dx * dx + dy * dy));
++}
++
++int test_player_guardian(Player *player, Guardian guardian[], int *board[]) {
++    double x0, x1, y0, y1;
++    double px, py;
+     int i;
++    double p;
++    double cmpt;
++    double ya;
++    /*x = player->position.x / SIZE;
++    y = player->position.y / SIZE;
++    x0 = x * SIZE;
++    y0 = y * SIZE;*/
++    x0 = player->position.x;
++    y0 = player->position.y;
++    
++    printf("player (%f, %f)\n", x0, y0);
+     for (i = 0; i < 5; i++) {
+-        guardian[i].mode = NORMAL;
+-        guardian[i].speed = 60;
++        /*x = guardian[i].position.x / SIZE;
++        y = guardian[i].position.y / SIZE;
++        x1 = x * SIZE;
++        y1 = y * SIZE;*/
++        x1 = guardian[i].position.x;
++        y1 = guardian[i].position.y;
++        printf("guardian(%f, %f)\n", x1, y1);
++
++        if (calcul_distance(player, guardian[i]) < guardian[i].radius * SIZE) {
++            cmpt = 0;
++            while(1) {
++                p = ((cmpt + x0) - x1) / (x0 - x1);
++                if (p >= 0 && p <= 1) {
++                    ya = y1 + ((y0 - y1)/(x0 - x1))*(cmpt - x1);
++                    px = p * x0 + (1 - p) * x1;
++                    py = p * y0 + (1 - p) * y1;
++                    printf("a : %f ya : %f\n", (x0/SIZE) + cmpt, ya / SIZE);
++                    printf("p : %f et (%f, %f) cmpt %f\n", p, px, py, cmpt);
++                    printf("wall %d %d\n", (int)(px / SIZE), (int)(py / SIZE));
++                    /* y = p*y0 + (1 - p)
++                    y1 = y1 + ((y0 - y1)/(x0 - x1))*(a - x1)*/
++                    if (board[(int)px][(int)py] == 1) {
++                        printf("wall %d %d\n", (int)(px / SIZE), (int)(py / SIZE));
++                        break;
++                    }
++                    /*if (p == 1) {
++                        return 1;
++                    }*/
++                }
++                cmpt++;
++            }
++        }
+     }
++    return 0;
+ }
+ 
+-void test_guardian(Guardian guardian[], int *board[]) {
+-    int i, j, x, y, flag;
+-    for(i = 0; i < 5; i++) {
+-        flag = test_colision(board, guardian[i].position.x, guardian[i].position.y,
+-                           guardian[i].dirX, guardian[i].dirY);
+-        if (flag == 1)  guardian[i].dirX *= -1;
+-        if (flag == 2)  guardian[i].dirY *= -1;
+-    }
+-}
+-/*
+-void test_player(Player *player, int *board[]){    
+-    int i, j, x, y, flag;    
+-    flag = test_colision(board, player->position.x, player->position.y, dirX, dirY);
+-        if (flag == 1)  guardian[i].dirX *= -1;
+-        if (flag == 2)  guardian[i].dirY *= -1;
+-    }
+-}*/
+-/*
+-void test_colision(Guardian guardian[], int *board[]){    
+-    int i, j, x, y;    
+-    for(i = 0; i < 5; i++){       
+-        x = guardian[i].position.x / SIZE; 
+-        y = guardian[i].position.y / SIZE; 
+-        if (guardian[i].dirX == 1 && (board[y][x+1] == 1 || board[y][x+1] == 2) && guardian[i].position.x % SIZE == SIZE/2)
+-            guardian[i].dirX *= -1;
+-        if (guardian[i].dirX == -1 && (board[y][x-1] == 1 || board[y][x-1] == 2) && guardian[i].position.x % SIZE == SIZE/2)
+-            guardian[i].dirX *= -1;
+-        if (guardian[i].dirY == 1 && (board[y+1][x] == 1 || board[y+1][x] == 2) && guardian[i].position.y % SIZE == SIZE/2)
+-            guardian[i].dirY *= -1;
+-        if (guardian[i].dirY == -1 && (board[y-1][x] == 1 || board[y-1][x] == 2) && guardian[i].position.y % SIZE == SIZE/2)
+-            guardian[i].dirY *= -1;          
+-    }
+-}*/
+-/*
+-void move_player(Player *player, MLV_Keyboard_button key, int *board[]){
+-    int flag;
+-    switch (key) {
+-            case MLV_KEYBOARD_z:
+-                flag = test_colision(board, player->position.x, player->position.y, 0, -1);
+-                if (flag != 1) player->position.y --;
+-                break;                
+-            case MLV_KEYBOARD_s:
+-                flag = test_colision(board, player->position.x, player->position.y, 0, 1);
+-                if (flag != 1) player->position.y ++;
+-                break;
+-            case MLV_KEYBOARD_q:
+-                flag = test_colision(board, player->position.x, player->position.y, -1, 0);
+-                if (flag != 1) player->position.x --;
+-                break;
+-            case MLV_KEYBOARD_d:
+-                flag = test_colision(board, player->position.x, player->position.y, 1, 0);
+-                if (flag != 1) player->position.x ++;
+-                break;
+-            case MLV_KEYBOARD_LSHIFT:
+-                break;
+-            case MLV_KEYBOARD_SPACE:
+-                break;
+-        }
+-    if (flag == 2) board[player->position.y][player->position.x] = 0;
+-    display_player(player);
+-}*/
+-
+-int calcul_distance(Player *player, Guardian guardian[]){
+-    int x, y;
++/**********************************************/
+ 
++int test_collision_player(int *board[], int positionX, int positionY, int dirX, int dirY) { /* player */
++    int x, y, flag, positionX1, positionY1;
++    x = positionX / SIZE; /*  Chercher colonne */
++    y = positionY / SIZE; /*  Chercher ligne */
++    positionX1 = x * SIZE;
++    positionY1 = y * SIZE;
++    flag = 0;
++    
++    if (dirX == 1) {  /* direction droite ou gauche */
++        if (board[y][x+dirX] == 1) {
++            if (positionX + (SIZE/2) > (x+1)*SIZE - 2) {
++                flag = 1;
++            }
++        }
++        else if (board[y-1][x+dirX] == 1) {
++                if ((positionY < positionY1 + SIZE/2) &&
++                    (positionX <= positionX1 + 1 - racine((double)(1/4 - expo(positionY - positionY1, 2))))) {
++                        flag = 1;
++                    }
++            }
++        else {
++            if (board[y+1][x+dirX] == 1) {
++                if ((positionY > positionY1 + SIZE/2) && 
++                    (positionX <= positionX1 + 1 - racine((double)(1/4 - expo(positionY1 + 1 - positionY, 2))))) {
++                        flag = 1;
++                    }
++            }
++        }
++        return flag;
++    }
++    if (dirX == -1) {  /* direction droite ou gauche */
++        if (board[y][x+dirX] == 1) {
++            if (positionX - (SIZE/2) <= x*SIZE) {
++                flag = 1;
++            }
++        }
++        else if (board[y-1][x+dirX] == 1) {
++            if ((positionY < positionY1 + SIZE/2) &&
++                (positionX <= positionX1 + 1 - racine((double)(1/4 - expo(positionY - positionY1, 2))))) {
++                    flag = 1;
++                }
++            }
++        else {
++            if (board[y+1][x+dirX] == 1) {
++                if ((positionY > positionY1 + SIZE/2) && 
++                    (positionX <= positionX1 + 1 - racine((double)(1/4 - expo(positionY1 + 1 - positionY, 2))))) {
++                        flag = 1;
++                    }
++            }
++        }
++        return flag;
++    }
++    if (dirY == 1) {   /* direction bas ou haut */
++        if (board[y+dirY][x] == 1) {
++            if (positionY + (SIZE/2) >= (y+1)*SIZE) {
++                flag = 2;
++            }
++        }
++        else if (positionX < positionX1 + SIZE/2) {
++            if ((board[y+dirY][x-1] == 1) &&
++                (positionY <= positionY1 + 1 - racine((double)(1/4 - expo(positionX - positionX1, 2))))) {
++                    flag = 2;
++                }
++        }
++        else {
++            if (positionX >= positionX1 + SIZE/2) {
++                if ((board[y+dirY][x+1] == 1) &&
++                    (positionY <= positionY1 + 1 - racine((double)(1/4 - expo(positionX1 + 1 - positionX, 2))))) {
++                        flag = 2;
++                    }
++            }
++        }
++        return flag;
++    }
++    if (dirY == -1) {   /* direction bas ou haut */
++        if (board[y+dirY][x] == 1) {
++            if (positionY - (SIZE/2) <= y*SIZE) {
++                flag = 2;
++            }
++        }
++        else if (positionX < positionX1 + SIZE/2) {
++            if ((board[y+dirY][x-1] == 1) &&
++                (positionY <= positionY1 + 1 - racine((double)(1/4 - expo(positionX - positionX1, 2))))) {
++                    flag = 2;
++                }
++        }
++        else {
++            if (positionX > positionX1 + SIZE/2) {
++                if ((board[y+dirY][x+1] == 1) &&
++                    (positionY <= positionY1 + 1 - racine((double)(1/4 - expo(positionX1 + 1 - positionX, 2))))) {
++                        flag = 2;
++                    }
++             }
++        }
++        return flag;
++    }
++    return flag;
+ }
+ 
+-void remove_relic(int *board[], int y, int x){
+-    board[y][x] = 0;
+-    display_board(board);
+-    MLV_save_screen();
++void remove_relic_mana(int *board[], int y, int x, Player *player) {
++    char msg[20];
++    if (board[y][x] == 2) {
++        board[y][x] = 0;
++        display_board(board);
++        MLV_save_screen();
++    }
++    else if (board[y][x] == 3) {
++        player->mana ++;
++        board[y][x] = 0;
++    }
+ }
+ 
+-void move_player(Player *player, MLV_Keyboard_button key, int *board[]){
++void move_player(Player *player, MLV_Keyboard_button key, int *board[]) {
+     int x, y;
+     x = player->position.x / SIZE; /*  Chercher colonne */
+     y = player->position.y / SIZE; /*  Chercher ligne */
+-    
+     switch (key) {
+             case MLV_KEYBOARD_z:
+-                if (board[y-1][x] == 1 && player->position.y % SIZE == SIZE/2) break;
+-                else {  player->position.y --;
+-                        if (board[y-1][x] == 2)  remove_relic(board, y-1, x);
+-                     }
++                if (test_collision_player(board, player->position.x, player->position.y, 0, -1) == 0) {
++                    player->position.y -= (player->speed / 60);
++                    remove_relic_mana(board, y-1, x, player);
++                }
+                 break;
+             case MLV_KEYBOARD_s:
+-                if (board[y+1][x] == 1 && player->position.y % SIZE == SIZE/2) break; 
+-                else { player->position.y ++;
+-                        if (board[y+1][x] == 2)  remove_relic(board, y+1, x);
+-                     }
++                if (test_collision_player(board, player->position.x, player->position.y, 0, 1) == 0) {
++                    player->position.y += (player->speed / 60);
++                    remove_relic_mana(board, y+1, x, player);
++                }
+                 break;
+             case MLV_KEYBOARD_q:
+-                if (board[y][x-1] == 1 && player->position.x % SIZE == SIZE/2) break;
+-                else { player->position.x --;
+-                        if (board[y][x-1] == 2)  remove_relic(board, y, x-1);
+-                     }
++                if (test_collision_player(board, player->position.x, player->position.y, -1, 0) == 0) {
++                    player->position.x -= (player->speed / 60);
++                    remove_relic_mana(board, y, x-1, player);
++                }
+                 break;
+             case MLV_KEYBOARD_d:
+-                if (board[y][x+1] == 1 && player->position.x % SIZE == SIZE/2) break;
+-                else { player->position.x ++;
+-                        if (board[y][x+1] == 2)  remove_relic(board, y, x+1);
+-                     }
++                if (test_collision_player(board, player->position.x, player->position.y, 1, 0) == 0) {
++                    player->position.x += (player->speed / 60);
++                    remove_relic_mana(board, y, x+1, player);
++                }
+                 break;
+             case MLV_KEYBOARD_LSHIFT:
+                 break;
+             case MLV_KEYBOARD_SPACE:
+                 break;
++            default :
++                break;
+     }
+     display_player(player);
+ }
+ 
+-
+-void move_guardian(Guardian guardian[], int *board[]) {
+-    int i;
+-    test_guardian(guardian, board);
+-    MLV_load_screen();
+-    for(i = 0; i < 5; i++){
+-        guardian[i].position.x += guardian[i].dirX;
+-        guardian[i].position.y += guardian[i].dirY;
+-    }
+-    display_guardian(guardian);
+-}
++/************************************************************/
+ 
+ void change_dir(Guardian guardian[]) {
+     int i, n;
+     n = rand() % 2;
+-    if(n == 0) n = -1; /* Pour avoir deux valeurs 1 ou -1 */
++    if (n == 0) n = -1; /* Pour avoir la valeur 1 ou -1 */
+     for (i = 0; i < 5; i++){
+         guardian[i].dirX = (guardian[i].dirX + n) % 2;
+         guardian[i].dirY = (guardian[i].dirY + n) % 2;
+     }
+ }
+ 
+-void waiting_time(struct timespec end_time, double *extratime, int speed) {
+-    double frametime, n;
++int test_collision_guardian(int *board[], int positionX, int positionY, int dirX, int dirY) { /* gardien */
++    int x, y, flag, positionX1, positionY1;
++    x = positionX / SIZE; /*  Chercher colonne */
++    y = positionY / SIZE; /*  Chercher ligne */
++    positionX1 = x * SIZE;
++    positionY1 = y * SIZE;
++    flag = 0;
++    
++    if (dirX == 1) {  /* direction droite */
++        if (board[y][x+1] == 1 || board[y][x+1] == 2) {
++            if (positionX + (SIZE/2) >= (x+1)*SIZE) {
++                flag = 1;
++            }
++        }
++        else if (positionY < positionY1 + SIZE/2) {
++            if ((board[y-1][x+1] == 1 || board[y-1][x+1] == 2) &&
++                (positionX <= positionX1 + 1 - racine((double)(1/4 - expo(positionY1 + 1 - positionY, 2))))) {
++                    flag = 1;
++                }
++        }
++        else {
++            if (positionY >= positionY1 + SIZE/2) {
++                if ((board[y+1][x+1] == 1 || board[y+1][x+1] == 2) &&
++                    (positionX <= positionX1 + 1 - racine((double)(1/4 - expo(positionY - positionY1, 2))))) {
++                        flag = 1;
++                    }
++            }
++        }
++        return flag;
++    }
++    if (dirX == -1) {  /* direction gauche */
++        if (board[y][x-1] == 1 || board[y][x-1] == 2) {
++            if (positionX - (SIZE/2) <= x*SIZE) {
++                flag = 1;
++            }
++        }
++        else if (positionY < positionY1 + SIZE/2) {
++            if ((board[y-1][x-1] == 1 || board[y-1][x-1] == 2) &&
++                (positionX <= positionX1 + 1 - racine((double)(1/4 - expo(positionY1 + 1 - positionY, 2))))) {
++                    flag = 1;
++                }
++        }
++        else {
++            if (positionY >= positionY1 + SIZE/2) {
++                if ((board[y+1][x-1] == 1 || board[y+1][x-1] == 2) &&
++                    (positionX <= positionX1 + 1 - racine((double)(1/4 - expo(positionY - positionY1, 2))))) {
++                        flag = 1;
++                    }
++            }
++        }
++        return flag;
++    }
++    if (dirY == 1) {   /* direction bas */
++        if (board[y+1][x] == 1 || board[y+1][x] == 2) {
++            if (positionY + (SIZE/2) >= (y+1)*SIZE) {
++                flag = 2;
++            }
++        }
++        else if (positionX < positionX1 + SIZE/2) {
++            if ((board[y+1][x-1] == 1 || board[y+1][x-1] == 2) &&
++                (positionY <= positionY1 + 1 - racine((double)(1/4 - expo(positionX - positionX1, 2))))) {
++                    flag = 2;
++                }
++        }
++        else {
++            if (positionX >= positionX1 + SIZE/2) {
++                if ((board[y+1][x+1] == 1 || board[y+1][x+1] == 2) &&
++                    (positionY <= positionY1 + 1 - racine((double)(1/4 - expo(positionX1 + 1 - positionX, 2))))) {
++                        flag = 2;
++                    }
++            }
++        }
++        return flag;
++    }
++    if (dirY == -1) {    /* direction haut */
++        if (board[y-1][x] == 1 || board[y-1][x] == 2) {
++            if (positionY - (SIZE/2) <= y*SIZE) {
++                flag = 2;
++            }
++        }
++        else if (positionX < positionX1 + SIZE/2) {
++            if ((board[y-1][x-1] == 1 || board[y-1][x-1] == 2) &&
++                (positionY <= positionY1 + 1 - racine((double)(1/4 - expo(positionX - positionX1, 2))))) {
++                    flag = 2;
++                }
++        }
++        else {
++            if (positionX >= positionX1 + SIZE/2) {
++                if ((board[y-1][x+1] == 1 || board[y-1][x+1] == 2) &&
++                    (positionY <= positionY1 + 1 - racine((double)(1/4 - expo(positionX1 + 1 - positionX, 2))))) {
++                        flag = 2;
++                    }
++            }
++        }
++    }
++    return flag;
++}
++
++void collision_guardian(Guardian guardian[], int n) {
++    int i;
++    i = 0;
++    while (i < 5) {
++        if (i != n) {
++            if (racine(expo(guardian[n].position.x - guardian[i].position.x, 2) +
++                    expo(guardian[n].position.y - guardian[i].position.y, 2)) <= SIZE) {
++                guardian[n].dirX *= -1; /* Les gardiens se sont croisés en horizontal -> on change leur direction */
++                guardian[n].dirY *= -1; /* Les gardiens se sont croisés en vertical -> on change leur direction */
++                break;
++            }
++        }
++        i++;
++    }
++}
++
++void test_guardian(Guardian guardian[], int *board[]) {
++    int i, flag;
++    for(i = 0; i < 5; i++) {
++        collision_guardian(guardian, i);
++        flag = test_collision_guardian(board, guardian[i].position.x, guardian[i].position.y,guardian[i].dirX, guardian[i].dirY);
++        if (flag == 1) guardian[i].dirX *= -1;
++        if (flag == 2) guardian[i].dirY *= -1;
++    }
++}
++
++void start_panic(Guardian guardian[]) {
++    int i;
++    MLV_stop_music();
++    MLV_play_music(MLV_load_music("Alarm.mp3"), 30.0, -1);
++    for (i = 0; i < 5; i++) {
++        guardian[i].mode = PANIC;
++        guardian[i].speed = 180;
++        guardian[i].relic--;
++        guardian[i].radius = 6;
++    }
++}
++
++void stop_panic(Guardian guardian[]) {
++    int i;
++    MLV_stop_music();
++    MLV_free_music(MLV_load_music("Alarm.mp3"));
++    MLV_play_music(MLV_load_music("Prison Life.mp3"), 30.0, -1);
++    for (i = 0; i < 5; i++) {
++        guardian[i].mode = NORMAL;
++        guardian[i].speed = 60;
++        guardian[i].radius = 4;
++    }
++}
++
++void move_guardian(Guardian guardian[], int *board[], int *relic[]) {
++    int i, j, cmpt = 3;
++    test_guardian(guardian, board);
++    MLV_load_screen();
++    for(i = 0; i < 5; i++) {
++        guardian[i].position.x += (guardian[i].dirX * guardian[i].speed / 60);
++        guardian[i].position.y += (guardian[i].dirY * guardian[i].speed / 60);
++    }
++    display_guardian(guardian);
++
++    for (i = 0; i < guardian[i].relic; i++){  /* Vérifier les reliques */
++        if (board[relic[i][0]][relic[i][1]] == 0) {
++            cmpt--;
++        }
++    }
++    if (cmpt < guardian[0].relic) {
++        start_panic(guardian);
++    }
++}
++
++void calcul_waiting_time(struct timespec end_time, double *extratime, int speed) {
++    double frametime;
+     struct timespec new_time;
+     clock_gettime(CLOCK_REALTIME, &new_time);
+     frametime = new_time.tv_sec - end_time.tv_sec;
+     frametime += (new_time.tv_sec - end_time.tv_sec) / 1.0E9;
+     (*extratime) = 1.0 / speed - frametime;
+ }
++void display_alert (void){
++    int i, width, height;
++    width = 960;
++    height = 720;
++    for (i = 0; i < 4; i++) {
++        MLV_draw_rectangle(i, i, width - 2*i, height - 2*i, MLV_COLOR_RED);
++    }
++    MLV_actualise_window();
++}
+ 
+-void play(Guardian guardian[], Player *player, int *board[]) {
++void save(char* name, struct timespec start, struct timespec end, int mana) {
++    time_t rawtime;
++    struct tm* timeinfo;
++    long elapsetime;
++    char buffer[80];
++    char* time;
++    char* text;
++    FILE* f;
++    
++    time(&rawtime);
++    timeinfo = localtime(&rawtime);
++    strftime(buffer, 80,"%d/%m/%Y, %H:%M:%S", timeinfo->tm_mday, timeinfo->tm_mon, );
++    sprintf("%s %s Time : %s, Mana spent : %d\n", buffer, name, )
++    elapsetime = (end.tv_sec - start.tv_sec) / 1000000000;
++    f = fopen("backup.bin", "ab+");
++    fwrite(text, strlen(text), 1, f);
++    fclose(f);
++}
++
++void play(Guardian guardian[], Player *player, int *board[], int *relic[]) {
++    char msg[20];
+     int cmpt = 0;
+-    double extratimeG = 0, extratimeP = 0, start_time_panic, end_time_panic;
+-    struct timespec end_time;
++    int flag = 0;
++    int x, y;
++    double extratime;
++    struct timespec end_time, start_time_panic, end_time_panic;
+     MLV_Keyboard_button key;
+     MLV_Button_state state;
+-   /* move_guardian(guardian, board);*/
++   
++    display_player(player);
+     while( MLV_get_event (&key, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &state)
+ 		                     == MLV_NONE || key != MLV_KEYBOARD_ESCAPE) {
+-
+         clock_gettime(CLOCK_REALTIME, &end_time);
++        move_guardian(guardian, board, relic);
++        sprintf(msg, "MANA = %d", player->mana); /* Afficher MANA  */
++        display_message(SIZE, 44 * SIZE, msg);
++        
++        if (test_player_guardian(player, guardian, board) == 1) {
++            display_endgame(1);
++            MLV_actualise_window();
++            MLV_wait_mouse(&x, &y);
++            break;
++        }
++
+         if (state == MLV_PRESSED) {
+-            if (key == MLV_KEYBOARD_z || key == MLV_KEYBOARD_s || key == MLV_KEYBOARD_q ||
+-                key == MLV_KEYBOARD_d || key == MLV_KEYBOARD_LSHIFT || key == MLV_KEYBOARD_SPACE){
+-                move_player(player, key, board);
+-                calcul_distance(player, guardian);
+-                waiting_time(end_time, &extratimeP, player->speed);
+-                if (extratimeP > 0) {
+-                    MLV_wait_milliseconds((int)extratimeP * 1000);
+-                    extratimeG -= extratimeP;
+-                }
+-            }
+-            if (extratimeP < extratimeG) continue;
++            move_player(player, key, board);
+         }
+-        display_player(player);
+-      /*  if (board[30][15] == 0) {
+-            if (guardian->mode == PANIC){
+-                clock_gettime(CLOCK_REALTIME, &end_time_panic);
+-                if (end_time_panic.tv_sec - start_time_panic.tv_sec == 30)
+-                    stop_panic(guardian);
+-            }
+-            else   clock_gettime(CLOCK_REALTIME, &start_time_panic);
+-            start_panic(guardian);
+-        }*/
+-        move_guardian(guardian, board);
+-        waiting_time(end_time, &extratimeG, guardian[0].speed);
+-        if (extratimeG > 0) {
+-            MLV_wait_milliseconds((int)extratimeG * 1000);
++        else {
++            display_player(player);       
++        }
++        calcul_waiting_time(end_time, &extratime, guardian[0].speed); /* Calcule le temp d'attente d'afficher */
++        if (extratime > 0) {
++            MLV_wait_milliseconds((int)extratime * 1000);
+             cmpt++;
+-            if (cmpt == 180) {
++            if (cmpt == 180) {  /* 180 frames = 3 seconds => changer la direction */
+                 cmpt = 0;
+                 change_dir(guardian);
+             }
+         }
++        if (guardian[0].mode == PANIC) { /* Calcule le temp de mode panique */
++            display_alert();
++            if (flag == 0){
++                clock_gettime(CLOCK_REALTIME, &start_time_panic);
++                flag = 1;
++            }
++            else {
++                clock_gettime(CLOCK_REALTIME, &end_time_panic);
++                if (end_time_panic.tv_sec - start_time_panic.tv_sec >= 30) {
++                    stop_panic(guardian);
++                    flag = 0;
++                }
++            }
++        }
+     }
+ }
++
+ void new_part(void){
+-    int i;
++    int i, **board, **relic;
+     Guardian guardian[5];
+-    Player player;
+-    int **board = NULL;
+-    board = (int **) malloc(sizeof(int*) * 45);
+-    for(i = 0; i < 45; i++)
++    Player player;    
++    board = (int**) malloc(sizeof(int*) * 45);
++    for(i = 0; i < 45; i++) {
+         board[i] = (int*) malloc(sizeof(int) * 60);
+-    initialise_board(board);
++    }
++    relic = (int **) malloc(sizeof(int*) * 3);
++    for(i = 0; i < 3; i++) {
++        relic[i] = (int*) malloc(sizeof(int) * 2);
++    }
++    initialise_board(board, relic);
+     initialise_player(&player); 
+     initialise_guardian(guardian);
+     
+-    
++    MLV_free_music(MLV_load_music("Foreign Affairs.mp3"));
++    MLV_play_music(MLV_load_music("Prison Life.mp3"), 30.0, -1);
+     display_board(board);
+     MLV_save_screen();
+-    display_guardian(guardian);
+     display_player(&player);
++    display_guardian(guardian);
+ 
+-    play(guardian, &player, board);
+-
++    play(guardian, &player, board, relic);
++    MLV_stop_music();
++    MLV_free_music(MLV_load_music("Prison Life.mp3"));
++    free(board);
++    free(relic);
+ }
+ 
+ /****************************************************************************/
++
+ void display_help(char* text) {
+     int x, y;
+     MLV_save_screen();
+-    MLV_draw_text_box(300, 300, 600, 500, text, 15, MLV_COLOR_AZURE1,
++    MLV_draw_text_box(200, 200, 600, 400, text, 15, MLV_COLOR_AZURE1,
+     MLV_COLOR_WHITE, MLV_COLOR_BLACK, MLV_TEXT_LEFT, MLV_HORIZONTAL_LEFT, MLV_VERTICAL_TOP);
+     MLV_actualise_window();
+     MLV_wait_mouse(&x, &y);
+@@ -391,19 +716,53 @@ void display_help(char* text) {
+     MLV_actualise_window();
+ }
+ 
++int display_choice(void) {
++    int x, y;
++    int choice;
++    MLV_Font* font = MLV_load_font("Garuda-Oblique.ttf", 45);
++    MLV_save_screen();
++    MLV_draw_filled_rectangle(2, 2, 956, 716, MLV_COLOR_AQUAMARINE1);
++    MLV_draw_filled_rectangle(200, 225, 200, 100, MLV_COLOR_BLACK);
++    MLV_draw_filled_rectangle(600, 225, 200, 100, MLV_COLOR_BLACK);
++    MLV_draw_filled_rectangle(210, 235, 180, 80, MLV_COLOR_GREEN);
++    MLV_draw_filled_rectangle(610, 235, 180, 80, MLV_COLOR_RED);
++    MLV_draw_text_with_font(300, 100, "Choose the difficulty", font, MLV_COLOR_BLACK);
++    MLV_draw_text_with_font(225, 225, "Normal", font, MLV_COLOR_BLACK);
++    MLV_draw_text_with_font(640, 225, "Hard", font, MLV_COLOR_BLACK);
++    MLV_actualise_window();
++    while(1) {
++        if (x >= 200 && x <= 400 && y >= 225 && y <= 325) { /* Bouton Normal */
++            choice = 1;
++            break;
++        }
++        if (x >= 600 && x <= 800 && y >= 225 && y <= 325) { /* Bouton Hard */
++            choice = 2;
++            break;
++        }
++        MLV_wait_mouse(&x, &y);
++    }
++    MLV_load_screen();
++    MLV_actualise_window();
++    return choice;
++}
++
+ void display_menu(void) {
+     int i;
+     char* text[3] = { "Play", "Help", "Exit" };   
+     MLV_Font* font = MLV_load_font("Garuda-Oblique.ttf", 50);
+-    MLV_draw_filled_rectangle(2, 2, 1496, 996, MLV_rgba(180, 110, 255, 255));
+-    MLV_draw_text_with_font(600, 100, "Stealth", MLV_load_font("Garuda-Oblique.ttf", 100), MLV_COLOR_LIGHTSTEELBLUE1);
++    MLV_draw_filled_rectangle(2, 2, 956, 716, MLV_rgba(180, 110, 255, 255));
++    MLV_draw_text_with_font(350, 25, "Stealth", MLV_load_font("Garuda-Oblique.ttf", 100), MLV_COLOR_LIGHTSTEELBLUE1);
++    MLV_draw_text_with_font(75, 650, "Made by Julien VU & Xavier GIANG", MLV_load_font("Garuda-Oblique.ttf", 25), MLV_COLOR_BLACK);
+     for (i = 0; i < 3; i++) {
+-        MLV_draw_filled_rectangle(600, 400 + 200 * i, 300, 150, MLV_COLOR_GREEN);
+-        MLV_draw_rectangle(600, 400 + 200 * i, 300, 150, MLV_COLOR_BLACK);
+-        MLV_draw_filled_rectangle(625, 400 + i * 200 + 25 * (i + 1) - (i * 25), 250, 100, MLV_COLOR_ANTIQUEWHITE1);
+-        MLV_draw_text_with_font(700, 400 + i * 200 + 25 * (i + 1)  - (i * 25), text[i], font, MLV_COLOR_BLACK);
+-        MLV_draw_rectangle(625, 400 + i * 200 + 25 * (i + 1) - (i * 25), 250, 100, MLV_COLOR_BLACK);
++        MLV_draw_filled_rectangle(600, 200 + 150 * i + (i * 25), 300, 150, MLV_COLOR_GREEN);
++        MLV_draw_rectangle(600, 200 + 150 * i + (i * 25) , 300, 150, MLV_COLOR_BLACK);
++
++        MLV_draw_filled_rectangle(625, 200 + i * 150 + 25 * (i + 1), 250, 100, MLV_COLOR_ANTIQUEWHITE1);
++        MLV_draw_text_with_font(700, 200 + i * 150 + 25 * (i + 1), text[i], font, MLV_COLOR_BLACK);
++        MLV_draw_rectangle(625, 200 + i * 150 + 25 * (i + 1), 250, 100, MLV_COLOR_BLACK);
+     }
++    MLV_draw_image(MLV_load_image("igm.png"), 10, 640);
++    MLV_draw_image(MLV_load_image("board.png"), 20, 200);
+     MLV_actualise_window();
+ }
+ 
+@@ -423,21 +782,23 @@ are showed.";
+ }
+ 
+ void menu(void) {
+-    int x, y, flag, choix;
++    int x, y, choix;
++    MLV_init_audio();
++    MLV_play_music(MLV_load_music("Foreign Affairs.mp3"), 30.0, -1);
+     while(1) {
+         MLV_clear_window(MLV_COLOR_BLACK);
+         display_menu();
+         MLV_wait_mouse(&x, &y);
+-        if (x > 600 && x < 900 && y > 300 && y < 950) {
+-            if (y > 300 && y < 550) {
++        if (x > 600 && x < 900 && y > 200 && y < 700) {
++            if (y > 200 && y < 350) {
++                choix = display_choice();
+                 new_part();
++                MLV_play_music(MLV_load_music("Foreign Affairs.mp3"), 30.0, -1);
+             }
+-
+-
+-            if (y > 600 && y < 750) {
++            if (y > 375 && y < 525) {
+                 display_help(help());
+             }
+-            if (y > 800 && y < 950) {
++            if (y > 550 && y < 700) {
+                 break;
+             }
+         }
+
+commit 99afc3f9597b64992733aeca5a0dc3ec4b3a9228
+Author: Julien Vu <julien.vu@etud.u-pem.fr>
+Date:   Sat Dec 31 20:41:04 2022 +0100
+
+    Modularisation du projet (sauf jeu.c)\nModification du fichier jeu.c vu qu'il comporte l'ensemble du programme sans être modulariser pour donner de la lisibilité au développeur.\nDans jeu.c, il n'y a pas encore de collision entre le joueur et les gardiens. Les murs sont fixes.
+
+diff --git a/Board.c b/Board.c
+new file mode 100644
+index 0000000..f327b84
+--- /dev/null
++++ b/Board.c
+@@ -0,0 +1,16 @@
++#include "Board.h"
++
++Board* initialise_board(void) {
++    int i;
++    int j;
++    Board* board;
++    board = (Board*) malloc(sizeof(Board) * 2400);
++    for (i = 0; i < 40; i++) {
++        for (j = 0; j < 60; j++) {
++            board->position.x = i; /* ligne */
++            board->position.y = j; /* colonne */
++        }
++        board->zone = TILE;
++    }
++    return board;
++}
+\ No newline at end of file
+diff --git a/Board.h b/Board.h
+new file mode 100644
+index 0000000..d7d833c
+--- /dev/null
++++ b/Board.h
+@@ -0,0 +1,20 @@
++#ifndef __BOARD__
++#define __BOARD__
++#include "Guardian.h"
++
++typedef enum {
++    TILE,
++    WALL,
++    RELIC,
++    MANA,
++    GUARDIAN
++} Zone;
++
++typedef struct {
++    Coor position;
++    Zone zone;
++} Board;
++
++Board* initialise_board(void);
++
++#endif
+\ No newline at end of file
+diff --git a/Display.c b/Display.c
+new file mode 100644
+index 0000000..544deb3
+--- /dev/null
++++ b/Display.c
+@@ -0,0 +1,39 @@
++#include "Display.h"
++
++void display_message(int x, int y, char* text) {
++    MLV_draw_text(x, y, text, MLV_COLOR_BLACK);
++}
++
++/*void display_button(void) {
++    MLV_draw_rectangle();
++    MLV_draw_rectangle();
++    MLV_actualise_window();
++}*/
++
++void display_help(char* text) {
++    int x, y;
++    MLV_save_screen();
++    MLV_draw_text_box(300, 300, 600, 500, text, 15, MLV_COLOR_AZURE1,
++    MLV_COLOR_WHITE, MLV_COLOR_BLACK, MLV_TEXT_LEFT, MLV_HORIZONTAL_LEFT, MLV_VERTICAL_TOP);
++    MLV_actualise_window();
++    MLV_wait_mouse(&x, &y);
++    MLV_load_screen();
++    MLV_actualise_window();
++}
++
++void display_menu(void) {
++    int i;
++    char* text[3] = { "Play", "Help", "Exit" };
++    printf("display\n");
++    MLV_Font* font = MLV_load_font("Garuda-Oblique.ttf", 50);
++    MLV_draw_filled_rectangle(2, 2, 1496, 996, MLV_rgba(180, 110, 255, 255));
++    MLV_draw_text_with_font(600, 200, "Stealth", MLV_load_font("Garuda-Oblique.ttf", 100), MLV_COLOR_LIGHTSTEELBLUE1);
++    for (i = 0; i < 3; i++) {
++        MLV_draw_filled_rectangle(600, 400 + 200 * i, 300, 150, MLV_COLOR_GREEN);
++        MLV_draw_rectangle(600, 400 + 200 * i, 300, 150, MLV_COLOR_BLACK);
++        MLV_draw_filled_rectangle(625, 400 + i * 200 + 25 * (i + 1) - (i * 25), 250, 100, MLV_COLOR_ANTIQUEWHITE1);
++        MLV_draw_text_with_font(700, 400 + i * 200 + 25 * (i + 1)  - (i * 25), text[i], font, MLV_COLOR_BLACK);
++        MLV_draw_rectangle(625, 400 + i * 200 + 25 * (i + 1) - (i * 25), 250, 100, MLV_COLOR_BLACK);
++    }
++    MLV_actualise_window();
++}
+\ No newline at end of file
+diff --git a/Display.h b/Display.h
+new file mode 100644
+index 0000000..dee69a5
+--- /dev/null
++++ b/Display.h
+@@ -0,0 +1,10 @@
++#ifndef __DISPLAY__
++#define __DISPLAY__
++#include "Board.h"
++#include "MLV/MLV_all.h"
++
++void display_message(int x, int y, char* text);
++void display_help(char* text);
++void display_menu(void);
++
++#endif
+\ No newline at end of file
+diff --git a/Garuda-Oblique.ttf b/Garuda-Oblique.ttf
+new file mode 100644
+index 0000000..1aefadd
+Binary files /dev/null and b/Garuda-Oblique.ttf differ
+diff --git a/Guardian.c b/Guardian.c
+new file mode 100644
+index 0000000..d247801
+--- /dev/null
++++ b/Guardian.c
+@@ -0,0 +1,10 @@
++#include "Guardian.h"
++
++Guardian initialise_guardian(void) {
++    Guardian guardian;
++    guardian.position.x = 0;
++    guardian.position.y = 0;
++    guardian.speed = 0;
++    guardian.mode = NORMAL;
++    return guardian;
++}
+\ No newline at end of file
+diff --git a/Guardian.h b/Guardian.h
+new file mode 100644
+index 0000000..c704f63
+--- /dev/null
++++ b/Guardian.h
+@@ -0,0 +1,18 @@
++#ifndef __GUARDIAN__
++#define __GUARDIAN__
++#include "Player.h"
++
++typedef enum {
++    NORMAL,
++    PANIC
++} Mode;
++
++typedef struct {
++    Coor position;
++    int speed;
++    Mode mode;
++} Guardian;
++
++Guardian initialise_guardian(void);
++
++#endif
+\ No newline at end of file
+diff --git a/Main.c b/Main.c
+new file mode 100644
+index 0000000..b9caa77
+--- /dev/null
++++ b/Main.c
+@@ -0,0 +1,11 @@
++#include "Menu.h"
++
++int main(int argc, char* argv[]) {
++    if (getopt(argc, argv, "--help") == 1) {
++        printf("%s\n", help());
++    }
++    MLV_create_window("Stealth", "Stealth", 1500, 1000); /* 1500 1000*/
++    menu();
++    MLV_free_window();
++    return 0;
++}
+\ No newline at end of file
+diff --git a/Makefile b/Makefile
+new file mode 100644
+index 0000000..921e878
+--- /dev/null
++++ b/Makefile
+@@ -0,0 +1,29 @@
++# Makefile
++CC=gcc
++CFLAGS=-Wall -ansi
++LDFLAGS=-lMLV
++OBJ=Main.o Menu.o Display.o Board.o Guardian.o Player.o
++
++Stealth : $(OBJ)
++
++	$(CC) -o $@ $^ $(CFLAGS)
++
++Main.o : Main.c Menu.h
++
++	$(CC) -c $< $(CFLAGS)
++
++Menu.o : Menu.c Menu.h Display.h
++
++Display.o : Display.c Display.h Board.h
++
++Board.o : Board.c Board.h Guardian.h
++
++Guardian.o : Guardian.c Guardian.h Player.h
++
++Player.o : Player.c Player.h
++
++%.o : %.c
++	$(CC) -c $< $(CFLAGS) $(LDFLAGS)
++
++clean :
++	rm -f Stealth *.o
+diff --git a/Menu.c b/Menu.c
+new file mode 100644
+index 0000000..11be465
+--- /dev/null
++++ b/Menu.c
+@@ -0,0 +1,37 @@
++#include "Menu.h"
++
++char* help(void) {
++    char* text;
++    text = "\n\
++    Help\n\
++Your goal is to infiltrate the room to recover all relics and return to the entrance.\n\
++without being spotted by the guards. Also you have magic skills to suceed this task.\n\
++When you passes over a tile, you picks up the traces of mana in this tile.\n\
++Furthermore, you can consume this mana by using the magic skills\n\
++which are 'accelaration' or 'invisibility'.\n\
++But the cooldown of these skills are limited compared to the mana pool you have.\n\
++After you succeeds, your personal time and the best timesof other players\n\
++are showed.";
++    return text;
++}
++
++void menu(void) {
++    int x, y, flag, choix;
++    while(1) {
++        MLV_clear_window(MLV_COLOR_BLACK);
++        display_menu();
++        MLV_wait_mouse(&x, &y);
++        if (x > 600 && x < 900 && y > 400 && y < 950) {
++            if (y > 400 && y < 550) {
++                break;
++            }
++            if (y > 600 && y < 750) {
++                /*printf("%s\n", help());*/
++                display_help(help());
++            }
++            if (y > 800 && y < 950) {
++                break;
++            }
++        }
++    }
++}
+\ No newline at end of file
+diff --git a/Menu.h b/Menu.h
+new file mode 100644
+index 0000000..16ca974
+--- /dev/null
++++ b/Menu.h
+@@ -0,0 +1,8 @@
++#ifndef __MENU__
++#define __MENU__
++#include "Display.h"
++
++void menu(void);
++char* help(void);
++
++#endif
+\ No newline at end of file
+diff --git a/Player.c b/Player.c
+new file mode 100644
+index 0000000..fd3491f
+--- /dev/null
++++ b/Player.c
+@@ -0,0 +1,12 @@
++#include "Player.h"
++
++Player initialise_player(void) {
++    Player player;
++    player.position.x = 0;
++    player.position.y = 0;
++    player.speed = 0;
++    player.mana = 0;
++    player.acceleration = 0;
++    player.invisibility = 0;
++    return player;
++}
+\ No newline at end of file
+diff --git a/Player.h b/Player.h
+new file mode 100644
+index 0000000..cdcca09
+--- /dev/null
++++ b/Player.h
+@@ -0,0 +1,22 @@
++#ifndef __PLAYER__
++#define __PLAYER__
++#include <stdio.h>
++#include <stdlib.h>
++#include <unistd.h>
++
++typedef struct {
++    int x;
++    int y;
++} Coor;
++
++typedef struct {
++    Coor position;
++    int speed;
++    int mana;
++    int acceleration;
++    int invisibility;
++} Player;
++
++Player initialise_player(void);
++
++#endif
+\ No newline at end of file
+diff --git a/jeu.c b/jeu.c
+new file mode 100644
+index 0000000..450219c
+--- /dev/null
++++ b/jeu.c
+@@ -0,0 +1,453 @@
++#include <stdio.h>
++#include <stdlib.h>
++#include <unistd.h>
++#include <time.h>
++#include "MLV/MLV_all.h"
++
++#define SIZE 16
++#define MIN(a,b) ((a) < (b) ? (a) : (b))
++
++typedef struct {
++    int x;
++    int y;
++} Coor;
++
++typedef struct {
++    Coor position;
++    int speed;
++    int mana;
++    int acceleration;
++    int invisibility;
++} Player;
++
++typedef enum {
++    NORMAL,
++    PANIC
++} Mode;
++
++typedef struct {
++    Coor position;
++    int dirX;
++    int dirY;
++    int speed;
++    Mode mode;
++} Guardian;
++
++/*
++typedef struct {
++    Coor position;
++    int classify;
++} Board;
++
++typedef enum {
++    TILE,
++    WALL,
++    RELIC,
++    MANA
++} Zone;
++
++typedef struct {
++    Coor position;
++    Zone zone;
++} Board;*/
++
++/************************************************************/
++void display_message(int x, int y, char* text) {
++    MLV_draw_text(x, y, text, MLV_COLOR_BLACK);
++}
++
++void initialise_board(int *board[]) {
++    int i, j;    
++    for (i = 0; i < 45; i++) {
++        for (j = 0; j < 60; j++) {
++            if (i == 0 || i == 44 || j == 0 || j == 59 ||
++               (i == 11 && j < 29) || (j == 12 && i > 3 && i < 11) ||
++               (j == 32 && i < 41) || (i == 17 && j > 32 && j < 56) ||
++               (j == 48 && i < 14) || (j == 48 && i > 20 && i < 32) ||
++               (i == 32 && j > 35) || (i > 35 && j == 47)) {
++                board[i][j] = 1;    /* WALL */
++            }
++            else if ((i == 30 && j == 15) ||(i == 40 && j == 55) ||(i == 6 && j == 40)) {
++                board[i][j] = 2;    /* RELIC */
++            }
++            else board[i][j] = 0;   /* TILL */
++        }
++    }
++}
++
++void initialise_player(Player *player) {
++    player->position.x = 30;
++    player->position.y = 30;
++    player->speed = 180;
++    player->mana = 0;
++    player->acceleration = 0;
++    player->invisibility = 0;
++}
++
++void initialise_guardian(Guardian guardian[]) {
++    int i;
++    int dirX[5] = {1, 0, -1, 0, 1};
++    int dirY[5] = {0, 1, 0, -1, 0};   
++    int x_guardian[5] = {225, 270, 450, 510, 825};
++    int y_guardian[5] = {225, 525, 420, 480, 90};
++
++    for (i = 0; i < 5; i++){
++        guardian[i].position.x = x_guardian[i];
++        guardian[i].position.y = y_guardian[i];
++        guardian[i].dirX = dirX[i];
++        guardian[i].dirY = dirY[i];
++        guardian[i].speed = 60;
++        guardian[i].mode = NORMAL;
++    }
++}
++
++void display_player(Player *player){
++    MLV_draw_circle(player->position.x, player->position.y, SIZE/2, MLV_COLOR_BLACK);
++    MLV_draw_filled_circle(player->position.x, player->position.y, SIZE/2-1, MLV_COLOR_RED);
++    MLV_actualise_window();
++}
++
++void display_guardian(Guardian guardian[]){
++    int i;
++    for (i = 0; i < 5; i++) {
++        MLV_draw_circle(guardian[i].position.x, guardian[i].position.y, SIZE/2, MLV_COLOR_BLACK);
++        MLV_draw_filled_circle(guardian[i].position.x, guardian[i].position.y, SIZE/2-1, MLV_COLOR_BLUE);
++        MLV_draw_circle(guardian[i].position.x, guardian[i].position.y, SIZE * 4, MLV_COLOR_BLUE);
++    }
++    MLV_actualise_window(); 
++}
++
++void display_board(int *board[]){
++    int i, j;
++    MLV_clear_window(MLV_COLOR_GREY);
++    for (i = 0; i < 45; i++) {
++        for (j = 0; j < 60; j++) {
++            switch (board[i][j]) {
++                case 1: MLV_draw_filled_rectangle(j * SIZE, i * SIZE, SIZE, SIZE, MLV_COLOR_BLACK);  /* WALL */
++                        break;
++                case 2: MLV_draw_filled_rectangle(j * SIZE, i * SIZE, SIZE, SIZE, MLV_COLOR_GREEN);  /* RELIC */
++                        break;
++                case 3: MLV_draw_filled_rectangle(j * SIZE, i * SIZE, SIZE, SIZE, MLV_COLOR_RED);
++                        break;
++                default:MLV_draw_rectangle(j * SIZE, i * SIZE, SIZE, SIZE, MLV_COLOR_BLACK);         /* TILL */
++            }
++        } 
++    }
++    MLV_actualise_window();
++}
++
++int test_colision(int *board[], int positionX, int positionY, int dirX, int dirY){ /* gardien */
++    int x, y, flag;
++    flag = 0;
++    x = positionX / SIZE; /*  Chercher colonne */
++    y = positionY / SIZE; /*  Chercher ligne */
++    if (dirX == 1 && (board[y][x+1] == 1 || board[y][x+1] == 2) && positionX % SIZE == SIZE/2)
++        flag = 1;
++    else if (dirX == -1 && (board[y][x-1] == 1 || board[y][x-1] == 2) && positionX % SIZE == SIZE/2)
++        flag = 1;  
++    else if (dirY == 1 && (board[y+1][x] == 1 || board[y+1][x] == 2) && positionY % SIZE == SIZE/2) 
++        flag = 2;
++    else if (dirY == -1 && (board[y-1][x] == 1 || board[y-1][x] == 2) && positionY % SIZE == SIZE/2)
++        flag = 2;
++    else flag = 0;
++    return flag; /* flag: 1 = colision x, 2 = colision y  */
++}
++
++void start_panic(Guardian guardian[]){
++    int i;
++    for (i = 0; i < 5; i++) {
++        guardian[i].mode = PANIC;
++        guardian[i].speed = 200;
++    }
++}
++
++void stop_panic(Guardian guardian[]){
++    int i;
++    for (i = 0; i < 5; i++) {
++        guardian[i].mode = NORMAL;
++        guardian[i].speed = 60;
++    }
++}
++
++void test_guardian(Guardian guardian[], int *board[]) {
++    int i, j, x, y, flag;
++    for(i = 0; i < 5; i++) {
++        flag = test_colision(board, guardian[i].position.x, guardian[i].position.y,
++                           guardian[i].dirX, guardian[i].dirY);
++        if (flag == 1)  guardian[i].dirX *= -1;
++        if (flag == 2)  guardian[i].dirY *= -1;
++    }
++}
++/*
++void test_player(Player *player, int *board[]){    
++    int i, j, x, y, flag;    
++    flag = test_colision(board, player->position.x, player->position.y, dirX, dirY);
++        if (flag == 1)  guardian[i].dirX *= -1;
++        if (flag == 2)  guardian[i].dirY *= -1;
++    }
++}*/
++/*
++void test_colision(Guardian guardian[], int *board[]){    
++    int i, j, x, y;    
++    for(i = 0; i < 5; i++){       
++        x = guardian[i].position.x / SIZE; 
++        y = guardian[i].position.y / SIZE; 
++        if (guardian[i].dirX == 1 && (board[y][x+1] == 1 || board[y][x+1] == 2) && guardian[i].position.x % SIZE == SIZE/2)
++            guardian[i].dirX *= -1;
++        if (guardian[i].dirX == -1 && (board[y][x-1] == 1 || board[y][x-1] == 2) && guardian[i].position.x % SIZE == SIZE/2)
++            guardian[i].dirX *= -1;
++        if (guardian[i].dirY == 1 && (board[y+1][x] == 1 || board[y+1][x] == 2) && guardian[i].position.y % SIZE == SIZE/2)
++            guardian[i].dirY *= -1;
++        if (guardian[i].dirY == -1 && (board[y-1][x] == 1 || board[y-1][x] == 2) && guardian[i].position.y % SIZE == SIZE/2)
++            guardian[i].dirY *= -1;          
++    }
++}*/
++/*
++void move_player(Player *player, MLV_Keyboard_button key, int *board[]){
++    int flag;
++    switch (key) {
++            case MLV_KEYBOARD_z:
++                flag = test_colision(board, player->position.x, player->position.y, 0, -1);
++                if (flag != 1) player->position.y --;
++                break;                
++            case MLV_KEYBOARD_s:
++                flag = test_colision(board, player->position.x, player->position.y, 0, 1);
++                if (flag != 1) player->position.y ++;
++                break;
++            case MLV_KEYBOARD_q:
++                flag = test_colision(board, player->position.x, player->position.y, -1, 0);
++                if (flag != 1) player->position.x --;
++                break;
++            case MLV_KEYBOARD_d:
++                flag = test_colision(board, player->position.x, player->position.y, 1, 0);
++                if (flag != 1) player->position.x ++;
++                break;
++            case MLV_KEYBOARD_LSHIFT:
++                break;
++            case MLV_KEYBOARD_SPACE:
++                break;
++        }
++    if (flag == 2) board[player->position.y][player->position.x] = 0;
++    display_player(player);
++}*/
++
++int calcul_distance(Player *player, Guardian guardian[]){
++    int x, y;
++
++}
++
++void remove_relic(int *board[], int y, int x){
++    board[y][x] = 0;
++    display_board(board);
++    MLV_save_screen();
++}
++
++void move_player(Player *player, MLV_Keyboard_button key, int *board[]){
++    int x, y;
++    x = player->position.x / SIZE; /*  Chercher colonne */
++    y = player->position.y / SIZE; /*  Chercher ligne */
++    
++    switch (key) {
++            case MLV_KEYBOARD_z:
++                if (board[y-1][x] == 1 && player->position.y % SIZE == SIZE/2) break;
++                else {  player->position.y --;
++                        if (board[y-1][x] == 2)  remove_relic(board, y-1, x);
++                     }
++                break;
++            case MLV_KEYBOARD_s:
++                if (board[y+1][x] == 1 && player->position.y % SIZE == SIZE/2) break; 
++                else { player->position.y ++;
++                        if (board[y+1][x] == 2)  remove_relic(board, y+1, x);
++                     }
++                break;
++            case MLV_KEYBOARD_q:
++                if (board[y][x-1] == 1 && player->position.x % SIZE == SIZE/2) break;
++                else { player->position.x --;
++                        if (board[y][x-1] == 2)  remove_relic(board, y, x-1);
++                     }
++                break;
++            case MLV_KEYBOARD_d:
++                if (board[y][x+1] == 1 && player->position.x % SIZE == SIZE/2) break;
++                else { player->position.x ++;
++                        if (board[y][x+1] == 2)  remove_relic(board, y, x+1);
++                     }
++                break;
++            case MLV_KEYBOARD_LSHIFT:
++                break;
++            case MLV_KEYBOARD_SPACE:
++                break;
++    }
++    display_player(player);
++}
++
++
++void move_guardian(Guardian guardian[], int *board[]) {
++    int i;
++    test_guardian(guardian, board);
++    MLV_load_screen();
++    for(i = 0; i < 5; i++){
++        guardian[i].position.x += guardian[i].dirX;
++        guardian[i].position.y += guardian[i].dirY;
++    }
++    display_guardian(guardian);
++}
++
++void change_dir(Guardian guardian[]) {
++    int i, n;
++    n = rand() % 2;
++    if(n == 0) n = -1; /* Pour avoir deux valeurs 1 ou -1 */
++    for (i = 0; i < 5; i++){
++        guardian[i].dirX = (guardian[i].dirX + n) % 2;
++        guardian[i].dirY = (guardian[i].dirY + n) % 2;
++    }
++}
++
++void waiting_time(struct timespec end_time, double *extratime, int speed) {
++    double frametime, n;
++    struct timespec new_time;
++    clock_gettime(CLOCK_REALTIME, &new_time);
++    frametime = new_time.tv_sec - end_time.tv_sec;
++    frametime += (new_time.tv_sec - end_time.tv_sec) / 1.0E9;
++    (*extratime) = 1.0 / speed - frametime;
++}
++
++void play(Guardian guardian[], Player *player, int *board[]) {
++    int cmpt = 0;
++    double extratimeG = 0, extratimeP = 0, start_time_panic, end_time_panic;
++    struct timespec end_time;
++    MLV_Keyboard_button key;
++    MLV_Button_state state;
++   /* move_guardian(guardian, board);*/
++    while( MLV_get_event (&key, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &state)
++		                     == MLV_NONE || key != MLV_KEYBOARD_ESCAPE) {
++
++        clock_gettime(CLOCK_REALTIME, &end_time);
++        if (state == MLV_PRESSED) {
++            if (key == MLV_KEYBOARD_z || key == MLV_KEYBOARD_s || key == MLV_KEYBOARD_q ||
++                key == MLV_KEYBOARD_d || key == MLV_KEYBOARD_LSHIFT || key == MLV_KEYBOARD_SPACE){
++                move_player(player, key, board);
++                calcul_distance(player, guardian);
++                waiting_time(end_time, &extratimeP, player->speed);
++                if (extratimeP > 0) {
++                    MLV_wait_milliseconds((int)extratimeP * 1000);
++                    extratimeG -= extratimeP;
++                }
++            }
++            if (extratimeP < extratimeG) continue;
++        }
++        display_player(player);
++      /*  if (board[30][15] == 0) {
++            if (guardian->mode == PANIC){
++                clock_gettime(CLOCK_REALTIME, &end_time_panic);
++                if (end_time_panic.tv_sec - start_time_panic.tv_sec == 30)
++                    stop_panic(guardian);
++            }
++            else   clock_gettime(CLOCK_REALTIME, &start_time_panic);
++            start_panic(guardian);
++        }*/
++        move_guardian(guardian, board);
++        waiting_time(end_time, &extratimeG, guardian[0].speed);
++        if (extratimeG > 0) {
++            MLV_wait_milliseconds((int)extratimeG * 1000);
++            cmpt++;
++            if (cmpt == 180) {
++                cmpt = 0;
++                change_dir(guardian);
++            }
++        }
++    }
++}
++void new_part(void){
++    int i;
++    Guardian guardian[5];
++    Player player;
++    int **board = NULL;
++    board = (int **) malloc(sizeof(int*) * 45);
++    for(i = 0; i < 45; i++)
++        board[i] = (int*) malloc(sizeof(int) * 60);
++    initialise_board(board);
++    initialise_player(&player); 
++    initialise_guardian(guardian);
++    
++    
++    display_board(board);
++    MLV_save_screen();
++    display_guardian(guardian);
++    display_player(&player);
++
++    play(guardian, &player, board);
++
++}
++
++/****************************************************************************/
++void display_help(char* text) {
++    int x, y;
++    MLV_save_screen();
++    MLV_draw_text_box(300, 300, 600, 500, text, 15, MLV_COLOR_AZURE1,
++    MLV_COLOR_WHITE, MLV_COLOR_BLACK, MLV_TEXT_LEFT, MLV_HORIZONTAL_LEFT, MLV_VERTICAL_TOP);
++    MLV_actualise_window();
++    MLV_wait_mouse(&x, &y);
++    MLV_load_screen();
++    MLV_actualise_window();
++}
++
++void display_menu(void) {
++    int i;
++    char* text[3] = { "Play", "Help", "Exit" };   
++    MLV_Font* font = MLV_load_font("Garuda-Oblique.ttf", 50);
++    MLV_draw_filled_rectangle(2, 2, 1496, 996, MLV_rgba(180, 110, 255, 255));
++    MLV_draw_text_with_font(600, 100, "Stealth", MLV_load_font("Garuda-Oblique.ttf", 100), MLV_COLOR_LIGHTSTEELBLUE1);
++    for (i = 0; i < 3; i++) {
++        MLV_draw_filled_rectangle(600, 400 + 200 * i, 300, 150, MLV_COLOR_GREEN);
++        MLV_draw_rectangle(600, 400 + 200 * i, 300, 150, MLV_COLOR_BLACK);
++        MLV_draw_filled_rectangle(625, 400 + i * 200 + 25 * (i + 1) - (i * 25), 250, 100, MLV_COLOR_ANTIQUEWHITE1);
++        MLV_draw_text_with_font(700, 400 + i * 200 + 25 * (i + 1)  - (i * 25), text[i], font, MLV_COLOR_BLACK);
++        MLV_draw_rectangle(625, 400 + i * 200 + 25 * (i + 1) - (i * 25), 250, 100, MLV_COLOR_BLACK);
++    }
++    MLV_actualise_window();
++}
++
++char* help(void) {
++    char* text;
++    text = "\n\
++    Help\n\
++Your goal is to infiltrate the room to recover all relics and return to the entrance.\n\
++without being spotted by the guards. Also you have magic skills to suceed this task.\n\
++When you passes over a tile, you picks up the traces of mana in this tile.\n\
++Furthermore, you can consume this mana by using the magic skills\n\
++which are 'accelaration' or 'invisibility'.\n\
++But the cooldown of these skills are limited compared to the mana pool you have.\n\
++After you succeeds, your personal time and the best timesof other players\n\
++are showed.";
++    return text;
++}
++
++void menu(void) {
++    int x, y, flag, choix;
++    while(1) {
++        MLV_clear_window(MLV_COLOR_BLACK);
++        display_menu();
++        MLV_wait_mouse(&x, &y);
++        if (x > 600 && x < 900 && y > 300 && y < 950) {
++            if (y > 300 && y < 550) {
++                new_part();
++            }
++
++
++            if (y > 600 && y < 750) {
++                display_help(help());
++            }
++            if (y > 800 && y < 950) {
++                break;
++            }
++        }
++    }
++}
++
++int main(void) {
++    srand(time(NULL));
++    MLV_create_window("Stealth", "Stealth", 960, 720);
++    menu();
++    MLV_free_window();
++    return 0;
++}
+\ No newline at end of file
